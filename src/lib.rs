@@ -32,5 +32,9 @@ enum Instruction {
     JumpIfNonzero(usize),
     Clear,
     Jump(u8),
-    Halt,
+    Call(u8),
+    ReturnOrHalt,
+    LoadArgument(usize),
+    StoreArgument(usize),
+    LoadReturn,
 }

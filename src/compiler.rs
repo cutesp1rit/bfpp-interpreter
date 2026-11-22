@@ -81,17 +81,36 @@ pub fn compile(source: &[u8], dialect: Dialect) -> Result<Program, CompileError>
             }
             _ if dialect == Dialect::Bfpp => match byte {
                 b'*' => Some(Instruction::Clear),
-                b'!' => Some(Instruction::Halt),
-                b'^' => {
+                b'!' => Some(Instruction::ReturnOrHalt),
+                b'$' => Some(Instruction::LoadReturn),
+                b'^' | b'&' => {
                     let Some(&label @ b'a'..=b'z') = source.get(offset + 1) else {
                         return Err(CompileError {
                             offset,
-                            message: "'^' must be followed by a label a-z".into(),
+                            message: format!(
+                                "'{}' must be followed by a label a-z",
+                                char::from(byte)
+                            ),
                         });
                     };
                     offset += 1;
-                    Some(Instruction::Jump(label))
+                    Some(if byte == b'^' {
+                        Instruction::Jump(label)
+                    } else {
+                        Instruction::Call(label)
+                    })
                 }
+                b'#' => {
+                    let Some(&digit @ b'0'..=b'9') = source.get(offset + 1) else {
+                        return Err(CompileError {
+                            offset,
+                            message: "'#' must be followed by an argument index 0-9".into(),
+                        });
+                    };
+                    offset += 1;
+                    Some(Instruction::LoadArgument(usize::from(digit - b'0')))
+                }
+                b'0'..=b'9' => Some(Instruction::StoreArgument(usize::from(byte - b'0'))),
                 b'a'..=b'z' => {
                     labels[label_index(byte)].get_or_insert(instructions.len());
                     None
@@ -118,7 +137,7 @@ pub fn compile(source: &[u8], dialect: Dialect) -> Result<Program, CompileError>
     }
 
     for &instruction in &instructions {
-        if let Instruction::Jump(label) = instruction
+        if let Instruction::Jump(label) | Instruction::Call(label) = instruction
             && labels[label_index(label)].is_none()
         {
             return Err(CompileError {
