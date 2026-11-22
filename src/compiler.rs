@@ -1,6 +1,12 @@
 use std::{error::Error, fmt};
 
-use crate::{Instruction, Program};
+use crate::{Instruction, Program, label_index};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Dialect {
+    Bf,
+    Bfpp,
+}
 
 #[derive(Debug)]
 pub struct CompileError {
@@ -20,12 +26,24 @@ impl fmt::Display for CompileError {
 
 impl Error for CompileError {}
 
-pub fn compile(source: &[u8]) -> Result<Program, CompileError> {
+pub fn compile(source: &[u8], dialect: Dialect) -> Result<Program, CompileError> {
     let mut instructions = Vec::new();
     let mut loops = Vec::new();
+    let mut labels = [None; 26];
+    let mut in_comment = false;
     let mut offset = 0;
 
     while let Some(&byte) = source.get(offset) {
+        if dialect == Dialect::Bfpp && byte == b'/' {
+            in_comment = !in_comment;
+            offset += 1;
+            continue;
+        }
+        if in_comment {
+            offset += 1;
+            continue;
+        }
+
         let instruction = match byte {
             b'+' | b'-' => {
                 offset += emit_run(
@@ -61,12 +79,37 @@ pub fn compile(source: &[u8]) -> Result<Program, CompileError> {
                 instructions[open] = Instruction::JumpIfZero(instructions.len() + 1);
                 Some(Instruction::JumpIfNonzero(open + 1))
             }
+            _ if dialect == Dialect::Bfpp => match byte {
+                b'*' => Some(Instruction::Clear),
+                b'!' => Some(Instruction::Halt),
+                b'^' => {
+                    let Some(&label @ b'a'..=b'z') = source.get(offset + 1) else {
+                        return Err(CompileError {
+                            offset,
+                            message: "'^' must be followed by a label a-z".into(),
+                        });
+                    };
+                    offset += 1;
+                    Some(Instruction::Jump(label))
+                }
+                b'a'..=b'z' => {
+                    labels[label_index(byte)].get_or_insert(instructions.len());
+                    None
+                }
+                _ => None,
+            },
             _ => None,
         };
         instructions.extend(instruction);
         offset += 1;
     }
 
+    if in_comment {
+        return Err(CompileError {
+            offset: source.len(),
+            message: "unterminated '/' comment".into(),
+        });
+    }
     if !loops.is_empty() {
         return Err(CompileError {
             offset: source.len(),
@@ -74,7 +117,21 @@ pub fn compile(source: &[u8]) -> Result<Program, CompileError> {
         });
     }
 
-    Ok(Program { instructions })
+    for &instruction in &instructions {
+        if let Instruction::Jump(label) = instruction
+            && labels[label_index(label)].is_none()
+        {
+            return Err(CompileError {
+                offset: 0,
+                message: format!("undefined label '{}'", char::from(label)),
+            });
+        }
+    }
+
+    Ok(Program {
+        instructions,
+        labels,
+    })
 }
 
 fn emit_run(

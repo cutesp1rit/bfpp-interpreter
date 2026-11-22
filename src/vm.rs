@@ -89,6 +89,15 @@ impl Program {
                     continue;
                 }
                 Instruction::JumpIfZero(_) | Instruction::JumpIfNonzero(_) => {}
+                Instruction::Clear => tape.set(0),
+                Instruction::Jump(label) => {
+                    pc = self.label_address(label);
+                    continue;
+                }
+                Instruction::Halt => {
+                    pc = self.instructions.len();
+                    break;
+                }
             }
             pc += 1;
         }
